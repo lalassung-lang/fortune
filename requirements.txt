@@ -1,0 +1,5 @@
+streamlit
+openai
+python-dotenv
+korean-lunar-calendar
+streamlit-clickable-images
