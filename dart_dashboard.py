@@ -248,31 +248,51 @@ if menu == "공시 검색":
             st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
             search_btn = st.form_submit_button("🔍 공시 조회", type="primary", use_container_width=True)
 
-    if not search_btn:
+    # 검색 버튼 클릭 시 session_state에 검색 조건 저장
+    if search_btn:
+        st.session_state["s_keyword"]    = keyword
+        st.session_state["s_page_count"] = page_count
+        st.session_state["s_bgn"]        = start_date.strftime("%Y%m%d")
+        st.session_state["s_end"]        = end_date.strftime("%Y%m%d")
+        st.session_state["s_pblntf"]     = pblntf_code
+        if keyword.strip():
+            st.session_state["s_companies"] = search_company(keyword.strip(), corp_map)
+        else:
+            st.session_state["s_companies"] = []
+
+    # 이전 검색 결과가 없으면 중단
+    if "s_bgn" not in st.session_state:
         st.stop()
 
-    # 기업 선택
+    # session_state에서 검색 조건 복원
+    s_keyword    = st.session_state["s_keyword"]
+    s_page_count = st.session_state["s_page_count"]
+    s_bgn        = st.session_state["s_bgn"]
+    s_end        = st.session_state["s_end"]
+    s_pblntf     = st.session_state["s_pblntf"]
+    s_companies  = st.session_state["s_companies"]
+
+    # 기업 선택 (드롭다운 변경 시에도 유지)
     corp_code_filter = ""
-    if keyword.strip():
-        companies = search_company(keyword.strip(), corp_map)
-        if not companies:
+    if s_keyword.strip():
+        if not s_companies:
             st.warning("검색된 기업이 없습니다.")
             st.stop()
-        if len(companies) == 1:
-            corp_code_filter = companies[0]["corp_code"]
-            st.info(f"기업: **{companies[0]['corp_name']}** (종목코드: {fmt_stock(companies[0]['stock_code'])})")
+        if len(s_companies) == 1:
+            corp_code_filter = s_companies[0]["corp_code"]
+            st.info(f"기업: **{s_companies[0]['corp_name']}** (종목코드: {fmt_stock(s_companies[0]['stock_code'])})")
         else:
-            options = {f"{c['corp_name']} ({fmt_stock(c['stock_code'])})": c["corp_code"] for c in companies}
+            options = {f"{c['corp_name']} ({fmt_stock(c['stock_code'])})": c["corp_code"] for c in s_companies}
             corp_code_filter = options[st.selectbox("검색된 기업 선택", list(options.keys()))]
 
     # 공시 조회
     with st.spinner("공시 데이터 조회 중..."):
         result = get_disclosure_list(
             corp_code=corp_code_filter,
-            bgn_de=start_date.strftime("%Y%m%d"),
-            end_de=end_date.strftime("%Y%m%d"),
-            pblntf_ty=pblntf_code,
-            page_count=page_count,
+            bgn_de=s_bgn,
+            end_de=s_end,
+            pblntf_ty=s_pblntf,
+            page_count=s_page_count,
         )
 
     if result.get("status") == "013":
