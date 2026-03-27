@@ -7,19 +7,34 @@ import os
 from pathlib import Path
 from datetime import date
 from openai import OpenAI
-from dotenv import load_dotenv
 
-# utils/ 한 단계 위 프로젝트 루트의 .env 를 명시적으로 로드
-_ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(dotenv_path=_ROOT / ".env", override=True)
+try:
+    from dotenv import load_dotenv
+    _ROOT = Path(__file__).resolve().parent.parent
+    load_dotenv(dotenv_path=_ROOT / ".env", override=True)
+except ImportError:
+    pass
 
 _client: OpenAI | None = None
+
+
+def _get_api_key() -> str:
+    """st.secrets → 환경변수 순으로 API 키를 탐색"""
+    try:
+        import streamlit as st
+        return st.secrets["OPENAI_API_KEY"]
+    except Exception:
+        pass
+    key = os.getenv("OPENAI_API_KEY")
+    if key:
+        return key
+    raise RuntimeError("OPENAI_API_KEY가 설정되지 않았습니다.")
 
 
 def get_client() -> OpenAI:
     global _client
     if _client is None:
-        _client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        _client = OpenAI(api_key=_get_api_key())
     return _client
 
 
