@@ -54,11 +54,26 @@ def _stream(prompt: str, system: str = "당신은 재미있고 친근한 운세 
 
 # ── 개별 운세 ─────────────────────────────────────────────────────────────────
 
-def get_saju_fortune(birth: date, gender: str, saju_summary: str, dominant_oheng: str) -> str:
+def get_saju_fortune(birth: date, gender: str, saju_summary: str, dominant_oheng: str,
+                     cal_type: str = "양력", lunar_birth: date | None = None) -> str:
     today = date.today().strftime("%Y년 %m월 %d일")
+    birth_str = birth.strftime('%Y년 %m월 %d일')
+    if cal_type == "음력" and lunar_birth:
+        date_info = (
+            f"음력 생년월일 {lunar_birth.strftime('%Y년 %m월 %d일')} "
+            f"(양력 변환: {birth_str})"
+        )
+    elif lunar_birth:
+        date_info = (
+            f"양력 생년월일 {birth_str} "
+            f"(음력 변환: {lunar_birth.strftime('%Y년 %m월 %d일')})"
+        )
+    else:
+        date_info = f"생년월일 {birth_str} ({cal_type})"
+
     prompt = f"""
 오늘은 {today}입니다.
-생년월일 {birth.strftime('%Y년 %m월 %d일')}인 {gender}의 사주를 분석해주세요.
+{date_info}인 {gender}의 사주를 분석해주세요.
 사주 요약: {saju_summary}
 주도 오행: {dominant_oheng}
 

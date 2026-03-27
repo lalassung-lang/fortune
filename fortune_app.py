@@ -10,6 +10,7 @@ from datetime import date
 import streamlit as st
 import streamlit.components.v1 as st_components
 from streamlit_clickable_images import clickable_images
+from korean_lunar_calendar import KoreanLunarCalendar
 
 from utils.saju import get_saju_info, OHENG_EMOJI
 from utils.zodiac import get_star_sign, get_animal_sign
@@ -19,6 +20,30 @@ from utils import openai_client as ai
 # ── 페이지 설정 ────────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="수리수리 오늘의 운세", page_icon="🔮", layout="wide")
+
+
+# ── 음력 ↔ 양력 변환 ─────────────────────────────────────────────────────────
+
+def lunar_to_solar(lunar_date: date) -> date | None:
+    """음력 날짜 → 양력 날짜 변환. 변환 불가 시 None."""
+    try:
+        cal = KoreanLunarCalendar()
+        cal.setLunarDate(lunar_date.year, lunar_date.month, lunar_date.day, False)
+        y, m, d = map(int, cal.SolarIsoFormat().split("-"))
+        return date(y, m, d)
+    except Exception:
+        return None
+
+
+def solar_to_lunar(solar_date: date) -> date | None:
+    """양력 날짜 → 음력 날짜 변환. 변환 불가 시 None."""
+    try:
+        cal = KoreanLunarCalendar()
+        cal.setSolarDate(solar_date.year, solar_date.month, solar_date.day)
+        y, m, d = map(int, cal.LunarIsoFormat().split("-"))
+        return date(y, m, d)
+    except Exception:
+        return None
 
 
 # ── SVG 타로 카드: 뒷면 / 앞면 ────────────────────────────────────────────────
@@ -250,6 +275,14 @@ st.markdown("""
 .element-container:has(.row2-eq-marker) ~ [data-testid="stHorizontalBlock"]:first-of-type > [data-testid="column"] {
     display: flex !important; flex-direction: column !important;
 }
+.element-container:has(.row2-eq-marker) + [data-testid="stHorizontalBlock"] > [data-testid="column"] > *,
+.element-container:has(.row2-eq-marker) + [data-testid="stHorizontalBlock"] > [data-testid="column"] > * > *,
+.element-container:has(.row2-eq-marker) + [data-testid="stHorizontalBlock"] > [data-testid="column"] > * > * > *,
+.element-container:has(.row2-eq-marker) ~ [data-testid="stHorizontalBlock"]:first-of-type > [data-testid="column"] > *,
+.element-container:has(.row2-eq-marker) ~ [data-testid="stHorizontalBlock"]:first-of-type > [data-testid="column"] > * > *,
+.element-container:has(.row2-eq-marker) ~ [data-testid="stHorizontalBlock"]:first-of-type > [data-testid="column"] > * > * > * {
+    flex: 1 !important; display: flex !important; flex-direction: column !important;
+}
 .element-container:has(.row2-eq-marker) + [data-testid="stHorizontalBlock"] .fortune-card,
 .element-container:has(.row2-eq-marker) ~ [data-testid="stHorizontalBlock"]:first-of-type .fortune-card {
     flex: 1 !important; margin-bottom: 0 !important;
@@ -303,6 +336,24 @@ st.markdown("""
     border-bottom: 1px solid rgba(200,160,255,.3);
     padding-bottom: .4rem; margin: 1.8rem 0 1rem;
 }
+
+/* ── 타이핑(스트리밍) 효과 ─────────────────────────────── */
+.typewriter-target {
+    min-height: 1.6em;
+}
+.typewriter-target::after {
+    content: '\\25CC';
+    color: #d4a8ff;
+    animation: cursorBlink 0.7s step-end infinite;
+}
+.typewriter-target.typing::after { content: none; }
+.tw-cursor {
+    color: #d4a8ff;
+    animation: cursorBlink 0.7s step-end infinite;
+}
+@keyframes cursorBlink {
+    50% { opacity: 0; }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -346,14 +397,105 @@ def extract_lotto_sets(text: str) -> list[list[int]]:
     return sets[:5]
 
 
-def fortune_card(title: str, content: str):
-    st.markdown(
-        f'<div class="fortune-card">'
-        f'<h3>{title}</h3>'
-        f'<div class="card-body">{content.replace(chr(10), "<br>")}</div>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
+def _tw_encode(html_str: str) -> str:
+    return base64.b64encode(html_str.encode("utf-8")).decode("ascii")
+
+
+def fortune_card(title: str, content: str, animate: bool = False):
+    html_body = content.replace(chr(10), "<br>")
+    if animate:
+        encoded = _tw_encode(html_body)
+        st.markdown(
+            f'<div class="fortune-card">'
+            f'<h3>{title}</h3>'
+            f'<div class="card-body typewriter-target" data-content="{encoded}"></div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f'<div class="fortune-card">'
+            f'<h3>{title}</h3>'
+            f'<div class="card-body">{html_body}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+
+def inject_typewriter_js():
+    """모든 .typewriter-target 요소에 AI 챗봇 스타일 타이핑 애니메이션 주입."""
+    st_components.html("""
+    <script>
+    (function(){
+        var doc = window.parent.document;
+
+        function decodeB64(encoded) {
+            var raw = atob(encoded);
+            var bytes = new Uint8Array(raw.length);
+            for (var j = 0; j < raw.length; j++) bytes[j] = raw.charCodeAt(j);
+            return new TextDecoder().decode(bytes);
+        }
+
+        function typeWriter(el, speed) {
+            var encoded = el.getAttribute('data-content');
+            if (!encoded) return;
+            var fullHTML = decodeB64(encoded);
+            el.removeAttribute('data-content');
+            el.classList.add('typing');
+            el.innerHTML = '<span class="tw-cursor">\\u258c</span>';
+            var i = 0, output = '';
+
+            function tick() {
+                if (i >= fullHTML.length) {
+                    el.innerHTML = fullHTML;
+                    el.classList.remove('typing');
+                    return;
+                }
+                if (fullHTML[i] === '<') {
+                    var tagEnd = fullHTML.indexOf('>', i);
+                    if (tagEnd !== -1) {
+                        output += fullHTML.substring(i, tagEnd + 1);
+                        i = tagEnd + 1;
+                        el.innerHTML = output + '<span class="tw-cursor">\\u258c</span>';
+                        tick();
+                        return;
+                    }
+                }
+                if (fullHTML[i] === '&') {
+                    var semi = fullHTML.indexOf(';', i);
+                    if (semi !== -1 && semi - i < 10) {
+                        output += fullHTML.substring(i, semi + 1);
+                        i = semi + 1;
+                        el.innerHTML = output + '<span class="tw-cursor">\\u258c</span>';
+                        el.scrollTop = el.scrollHeight;
+                        setTimeout(tick, speed);
+                        return;
+                    }
+                }
+                output += fullHTML[i];
+                i++;
+                el.innerHTML = output + '<span class="tw-cursor">\\u258c</span>';
+                el.scrollTop = el.scrollHeight;
+                setTimeout(tick, speed);
+            }
+            tick();
+        }
+
+        setTimeout(function(){
+            requestAnimationFrame(function(){
+                var targets = doc.querySelectorAll('.typewriter-target[data-content]');
+                targets.forEach(function(el, idx) {
+                    var encoded = el.getAttribute('data-content');
+                    var text = decodeB64(encoded);
+                    var textLen = text.replace(/<[^>]*>/g, '').length;
+                    var speed = Math.max(8, Math.min(22, 4500 / Math.max(textLen, 1)));
+                    setTimeout(function(){ typeWriter(el, speed); }, idx * 350);
+                });
+            });
+        }, 100);
+    })();
+    </script>
+    """, height=0)
 
 
 def render_tarot_selector(tarot_cards: list, selected_idx):
@@ -404,7 +546,6 @@ def render_tarot_selector(tarot_cards: list, selected_idx):
             "justify-content": "space-around",
             "align-items":     "flex-start",
             "width":           "100%",
-            "min-height":      "100vh",
             "padding":         "8px 4px 10px",
             "background":      "rgba(26,16,50,0.92)",
             "border-radius":   "10px",
@@ -452,22 +593,26 @@ def render_tarot_selector(tarot_cards: list, selected_idx):
             boxShadow:            '0 4px 28px rgba(0,0,0,.35), 0 0 0 0.5px rgba(200,160,255,.08)',
             boxSizing:            'border-box',
             color:                '#f0e6ff',
-            overflow:             'hidden'
+            overflow:             'hidden',
+            minHeight:            '440px'
         });
 
-        // 2) 4개 카드 전체 높이를 최대값에 맞춤
-        function syncAll(){
-            var cards = doc.querySelectorAll('.fortune-card');
-            var maxH = 0;
-            cards.forEach(function(c){ if(c.offsetHeight > maxH) maxH = c.offsetHeight; });
-            if(col.offsetHeight > maxH) maxH = col.offsetHeight;
-            if(maxH < 200) return;
-            cards.forEach(function(c){ c.style.minHeight = maxH + 'px'; });
+        // 2) Row 2의 띠운세 카드와 타로 컬럼 높이를 동기화
+        function syncRow2(){
+            var row = col.closest('[data-testid="stHorizontalBlock"]');
+            if(!row) return;
+            var siblingCard = row.querySelector('.fortune-card');
+            if(!siblingCard) return;
+            var cardH = siblingCard.offsetHeight;
+            var colH  = col.scrollHeight;
+            var maxH  = Math.max(cardH, colH, 440);
+            siblingCard.style.minHeight = maxH + 'px';
+            col.style.minHeight = maxH + 'px';
             col.style.height = maxH + 'px';
         }
-        requestAnimationFrame(function(){ requestAnimationFrame(syncAll); });
-        setTimeout(syncAll, 400);
-        setTimeout(syncAll, 1000);
+        requestAnimationFrame(function(){ requestAnimationFrame(syncRow2); });
+        setTimeout(syncRow2, 400);
+        setTimeout(syncRow2, 1000);
     })();
     </script>
     """, height=0)
@@ -485,6 +630,10 @@ for key, default in {
     "tarot_result":   "",
     "report_result":  "",
     "lotto_sets":     [],
+    "animate_keys":   [],
+    "cal_type":       "양력",
+    "solar_birth":    None,
+    "lunar_birth":    None,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -504,12 +653,16 @@ st.markdown("""
 # ── 입력부 ─────────────────────────────────────────────────────────────────────
 
 with st.form("fortune_form", border=False):
-    d_col, g_col, b_col = st.columns([5, 3, 3])
+    d_col, cal_col, g_col, b_col = st.columns([4, 2.5, 2.5, 2.5])
     with d_col:
         birth_input = st.date_input(
             "생년월일", value=date(1995, 1, 1),
             min_value=date(1930, 1, 1), max_value=date.today(),
             label_visibility="collapsed",
+        )
+    with cal_col:
+        cal_type = st.radio(
+            "달력", ["양력", "음력"], horizontal=True, label_visibility="collapsed",
         )
     with g_col:
         gender_raw = st.radio(
@@ -531,67 +684,102 @@ if run_btn:
             None if key in ["tarot_cards","tarot_selected"] else
             [] if key == "lotto_sets" else ""
         )
-    birth       = birth_input
-    saju_info   = get_saju_info(birth)
-    star_info   = get_star_sign(birth)
-    animal_info = get_animal_sign(birth)
+
+    is_lunar = (cal_type == "음력")
+    st.session_state["cal_type"] = cal_type
+
+    if is_lunar:
+        solar_birth = lunar_to_solar(birth_input)
+        if solar_birth is None:
+            st.error("입력하신 음력 날짜를 변환할 수 없습니다. 날짜를 확인해주세요.")
+            st.stop()
+        lunar_birth = birth_input
+        st.session_state["solar_birth"] = solar_birth
+        st.session_state["lunar_birth"] = lunar_birth
+    else:
+        solar_birth = birth_input
+        lunar_birth = solar_to_lunar(birth_input)
+        st.session_state["solar_birth"] = solar_birth
+        st.session_state["lunar_birth"] = lunar_birth
+
+    saju_info   = get_saju_info(solar_birth)
+    star_info   = get_star_sign(solar_birth)
+    animal_info = get_animal_sign(solar_birth)
     st.session_state["tarot_cards"] = draw_cards(3)
 
-    st.markdown('<div class="section-title">🌟 오늘의 개별 운세</div>', unsafe_allow_html=True)
-    st.markdown('<div class="row1-eq-marker"></div>', unsafe_allow_html=True)
-    col_s, col_z = st.columns(2)
-    with col_s:
-        with st.spinner("🧧 사주 운세 읽는 중..."):
-            saju_result = ai.get_saju_fortune(birth, gender, saju_info["summary"], saju_info["dominant_oheng"])
-            st.session_state["saju_result"] = saju_result
-        oheng_emoji = OHENG_EMOJI.get(saju_info["dominant_oheng"], "")
-        fortune_card(f"🧧 사주운세 &nbsp;|&nbsp; {oheng_emoji} {saju_info['dominant_oheng']} 기운", saju_result)
-    with col_z:
-        with st.spinner("♈ 별자리 운세 읽는 중..."):
-            star_result = ai.get_star_fortune(birth, gender, star_info["name"], star_info["symbol"])
-            st.session_state["star_result"] = star_result
-        fortune_card(f"{star_info['symbol']} 별자리운세 &nbsp;|&nbsp; {star_info['name']} ({star_info['range']})", star_result)
-
-    st.markdown('<div class="row2-spacer"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="row2-eq-marker"></div>', unsafe_allow_html=True)
-    col_a, col_t = st.columns(2)
-    with col_a:
-        with st.spinner("🐉 띠 운세 읽는 중..."):
-            animal_result = ai.get_animal_fortune(birth, gender, animal_info["name"], animal_info["emoji"], animal_info["compatible"])
-            st.session_state["animal_result"] = animal_result
-        fortune_card(f"{animal_info['emoji']} 띠운세 &nbsp;|&nbsp; {animal_info['name']}띠", animal_result)
-    with col_t:
-        render_tarot_selector(st.session_state["tarot_cards"], None)
+    cal_label = "음력" if is_lunar else "양력"
+    with st.spinner("🔮 사주 · 별자리 · 띠 운세를 읽는 중..."):
+        st.session_state["saju_result"] = ai.get_saju_fortune(
+            solar_birth, gender, saju_info["summary"], saju_info["dominant_oheng"],
+            cal_type=cal_label, lunar_birth=lunar_birth,
+        )
+        st.session_state["star_result"] = ai.get_star_fortune(
+            solar_birth, gender, star_info["name"], star_info["symbol"],
+        )
+        st.session_state["animal_result"] = ai.get_animal_fortune(
+            solar_birth, gender, animal_info["name"], animal_info["emoji"], animal_info["compatible"],
+        )
 
     st.session_state["fortune_done"] = True
+    st.session_state["animate_keys"] = ["saju", "star", "animal"]
     st.rerun()
 
 
 # ── 결과 표시 ─────────────────────────────────────────────────────────────────
 
 if st.session_state["fortune_done"] and st.session_state["saju_result"]:
-    birth        = birth_input
-    saju_info    = get_saju_info(birth)
-    star_info    = get_star_sign(birth)
-    animal_info  = get_animal_sign(birth)
+    solar_birth  = st.session_state.get("solar_birth", birth_input)
+    lunar_birth  = st.session_state.get("lunar_birth")
+    saved_cal    = st.session_state.get("cal_type", "양력")
+    saju_info    = get_saju_info(solar_birth)
+    star_info    = get_star_sign(solar_birth)
+    animal_info  = get_animal_sign(solar_birth)
     tarot_cards  = st.session_state["tarot_cards"]
     selected_idx = st.session_state.get("tarot_selected")
+    _anim_keys   = st.session_state.get("animate_keys", [])
+
+    # 양력/음력 날짜 안내 배너
+    if saved_cal == "음력" and lunar_birth:
+        date_badge = (
+            f'<div style="text-align:center;margin-bottom:.6rem;">'
+            f'<span style="background:rgba(100,60,180,.45);padding:6px 16px;border-radius:20px;'
+            f'font-size:.88rem;color:#e0d0ff;">'
+            f'📅 음력 {lunar_birth.strftime("%Y.%m.%d")}'
+            f' &nbsp;→&nbsp; 양력 {solar_birth.strftime("%Y.%m.%d")}'
+            f'</span></div>'
+        )
+    elif lunar_birth:
+        date_badge = (
+            f'<div style="text-align:center;margin-bottom:.6rem;">'
+            f'<span style="background:rgba(100,60,180,.45);padding:6px 16px;border-radius:20px;'
+            f'font-size:.88rem;color:#e0d0ff;">'
+            f'📅 양력 {solar_birth.strftime("%Y.%m.%d")}'
+            f' &nbsp;→&nbsp; 음력 {lunar_birth.strftime("%Y.%m.%d")}'
+            f'</span></div>'
+        )
+    else:
+        date_badge = ""
 
     st.markdown('<div class="section-title">🌟 오늘의 개별 운세</div>', unsafe_allow_html=True)
+    if date_badge:
+        st.markdown(date_badge, unsafe_allow_html=True)
 
     # Row 1: 사주 + 별자리
     st.markdown('<div class="row1-eq-marker"></div>', unsafe_allow_html=True)
     col_s, col_z = st.columns(2)
     with col_s:
         oheng_emoji = OHENG_EMOJI.get(saju_info["dominant_oheng"], "")
+        cal_tag = f"&nbsp;🌙" if saved_cal == "음력" else ""
         fortune_card(
-            f"🧧 사주운세 &nbsp;|&nbsp; {oheng_emoji} {saju_info['dominant_oheng']} 기운",
+            f"🧧 사주운세 &nbsp;|&nbsp; {oheng_emoji} {saju_info['dominant_oheng']} 기운{cal_tag}",
             st.session_state["saju_result"],
+            animate="saju" in _anim_keys,
         )
     with col_z:
         fortune_card(
             f"{star_info['symbol']} 별자리운세 &nbsp;|&nbsp; {star_info['name']} ({star_info['range']})",
             st.session_state["star_result"],
+            animate="star" in _anim_keys,
         )
 
     # ── Row 2: 띠운세(좌) + 타로카드 선택 패널(우) ─ 동일 min-height 440px ──
@@ -602,6 +790,7 @@ if st.session_state["fortune_done"] and st.session_state["saju_result"]:
         fortune_card(
             f"{animal_info['emoji']} 띠운세 &nbsp;|&nbsp; {animal_info['name']}띠",
             st.session_state["animal_result"],
+            animate="animal" in _anim_keys,
         )
     with col_t:
         render_tarot_selector(tarot_cards, selected_idx)
@@ -615,24 +804,34 @@ if st.session_state["fortune_done"] and st.session_state["saju_result"]:
                 st.info(chosen["scary_note"])
         with st.spinner(f"🎴 {chosen['korean']} 카드를 해석하는 중..."):
             tarot_result = ai.get_tarot_fortune(
-                birth_input, gender,
+                solar_birth, gender,
                 chosen["name"], chosen["korean"],
                 chosen["emoji"], chosen["direction"],
             )
             st.session_state["tarot_result"] = tarot_result
+            anim = list(st.session_state.get("animate_keys", []))
+            if "tarot" not in anim:
+                anim.append("tarot")
+            st.session_state["animate_keys"] = anim
             st.rerun()
 
     # ── Row 3: 타로카드 해석 (우측 컬럼, 컴팩트) ─────────────────────────────
     if st.session_state.get("tarot_result") and selected_idx is not None:
         chosen = tarot_cards[selected_idx]
         interp_html = st.session_state["tarot_result"].replace(chr(10), "<br>")
+        _do_tarot_anim = "tarot" in _anim_keys
         st.markdown('<div style="height:12px;"></div>', unsafe_allow_html=True)
         _, col_interp = st.columns(2)
         with col_interp:
+            if _do_tarot_anim:
+                encoded = _tw_encode(interp_html)
+                inner = f'<div class="typewriter-target" data-content="{encoded}"></div>'
+            else:
+                inner = f'<div>{interp_html}</div>'
             st.markdown(
                 f'<div class="tarot-interp-compact">'
                 f'<h4>{chosen["emoji"]} {chosen["korean"]} &nbsp;|&nbsp; {chosen["direction"]} 해석</h4>'
-                f'{interp_html}'
+                f'{inner}'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -645,9 +844,10 @@ if (st.session_state["tarot_result"]
         and not st.session_state["report_result"]):
     tarot_cards = st.session_state["tarot_cards"]
     chosen      = tarot_cards[st.session_state["tarot_selected"]]
+    _report_birth = st.session_state.get("solar_birth", birth_input)
     with st.spinner("📋 모든 운명의 조각을 모으는 중... 잠시만요 🔮"):
         report = ai.get_synthesis_report(
-            birth_input, gender,
+            _report_birth, gender,
             st.session_state["saju_result"],
             st.session_state["star_result"],
             st.session_state["animal_result"],
@@ -655,16 +855,27 @@ if (st.session_state["tarot_result"]
             card_label(chosen),
         )
         st.session_state["report_result"] = report
+        anim = list(st.session_state.get("animate_keys", []))
+        if "report" not in anim:
+            anim.append("report")
+        st.session_state["animate_keys"] = anim
         st.rerun()
 
 
 # ── 종합 리포트 + 로또 ────────────────────────────────────────────────────────
 
 if st.session_state["report_result"]:
+    _anim_report = st.session_state.get("animate_keys", [])
+    _do_report_anim = "report" in _anim_report
     st.markdown('<div class="section-title">📋 오늘의 종합 리포트</div>', unsafe_allow_html=True)
     report_html = st.session_state["report_result"].replace("\n", "<br>")
+    if _do_report_anim:
+        encoded = _tw_encode(report_html)
+        report_inner = f'<div class="report-item typewriter-target" data-content="{encoded}"></div>'
+    else:
+        report_inner = f'<div class="report-item">{report_html}</div>'
     st.markdown(
-        f'<div class="report-banner"><div class="report-item">{report_html}</div></div>',
+        f'<div class="report-banner">{report_inner}</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
@@ -673,9 +884,10 @@ if st.session_state["report_result"]:
         unsafe_allow_html=True,
     )
     if not st.session_state["lotto_sets"]:
+        _lotto_birth = st.session_state.get("solar_birth", birth_input)
         with st.spinner("🍀 운명의 번호를 뽑는 중..."):
             raw_text = ai.get_lotto_numbers(
-                birth_input, gender,
+                _lotto_birth, gender,
                 st.session_state["saju_result"],
                 st.session_state["star_result"],
                 st.session_state["animal_result"],
@@ -692,3 +904,10 @@ if st.session_state["report_result"]:
         '⚠️ 이 서비스는 재미를 위한 것이며, 실제 운세나 투자 근거가 아닙니다.</div>',
         unsafe_allow_html=True,
     )
+
+
+# ── 타이핑 애니메이션 주입 ────────────────────────────────────────────────────
+
+if st.session_state.get("animate_keys"):
+    inject_typewriter_js()
+    st.session_state["animate_keys"] = []
